@@ -125,7 +125,7 @@ read -r DEV_PLAN_CLIENT DEV_PLAN_PRINCIPAL <<< "$ids"
 ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' "$DEV_PLAN_CLIENT" 'github-pull-request' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:pull_request"
 ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' "$DEV_PLAN_CLIENT" 'github-environment-dev-plan' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:environment:dev-plan"
 ensure_role "$DEV_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-dev-eus2-01-rg'
-ensure_role "$DEV_PLAN_PRINCIPAL" 'Storage Blob Data Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st/blobServices/default/containers/tfstate-dev'
+ensure_role "$DEV_PLAN_PRINCIPAL" 'Storage Blob Data Contributor' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st/blobServices/default/containers/tfstate-dev'
 ensure_role "$DEV_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st'
 value AZURE_TENANT_ID_DEV 'c4f459b7-180a-4c09-a60f-bb7a0e204c1c'
 value AZURE_SUBSCRIPTION_ID_DEV 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd'
@@ -151,7 +151,7 @@ read -r PRD_PLAN_CLIENT PRD_PLAN_PRINCIPAL <<< "$ids"
 ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' "$PRD_PLAN_CLIENT" 'github-pull-request' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:pull_request"
 ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' "$PRD_PLAN_CLIENT" 'github-environment-prd-plan' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:environment:prd-plan"
 ensure_role "$PRD_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-prd-eus2-01-rg'
-ensure_role "$PRD_PLAN_PRINCIPAL" 'Storage Blob Data Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st/blobServices/default/containers/tfstate-prd'
+ensure_role "$PRD_PLAN_PRINCIPAL" 'Storage Blob Data Contributor' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st/blobServices/default/containers/tfstate-prd'
 ensure_role "$PRD_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st'
 value AZURE_TENANT_ID_PRD 'c4f459b7-180a-4c09-a60f-bb7a0e204c1c'
 value AZURE_SUBSCRIPTION_ID_PRD 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd'
