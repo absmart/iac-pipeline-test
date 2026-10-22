@@ -1,0 +1,12 @@
+plan.txt
+changes.txt
+whatif.json
+tfplan
+.tfplan/
+.tfplans/
+.tfplans-json/
+pipeline-values.env
+.terraform/
+*.tfstate
+*.tfstate.backup
+bootstrap/backend_override.tf
