@@ -3,7 +3,7 @@
 #
 # Run it with the Azure CLI signed in as someone who can create resource groups and
 # managed identities or app registrations, and assign roles at the scopes below
-# (Owner, or Contributor plus User Access Administrator). Needs the Azure CLI and jq.
+# (Owner, or Contributor plus User Access Administrator). Needs the Azure CLI, the GitHub CLI (signed in, to read the repository's OIDC subject prefix) and jq.
 # It only creates what is missing, so it is safe to run again. The IDs the repository
 # setup needs go to pipeline-values.env (or $VALUES_FILE); they are not secrets.
 
@@ -22,6 +22,19 @@ VALUES_FILE="${VALUES_FILE:-pipeline-values.env}"
 : > "$VALUES_FILE"
 value() { echo "$1=$2" >> "$VALUES_FILE"; }
 
+# The subject prefix GitHub puts in this repository's OIDC tokens: repo:<owner>/<repo>, or with
+# immutable subjects (the default for new repositories) repo:<owner>@<id>/<repo>@<id>.
+oidc="$(gh api 'repos/absmart/iac-pipeline-test/actions/oidc/customization/sub' --jq 'if .use_default == false then "custom" else (.sub_claim_prefix // "") end')" || {
+  echo 'Couldn'\''t read the OIDC settings of absmart/iac-pipeline-test. Create the repository first and sign in with gh auth login.' >&2
+  exit 1
+}
+if [ "$oidc" = custom ]; then
+  echo 'absmart/iac-pipeline-test uses a custom OIDC subject template. Reset it (gh api -X PUT repos/absmart/iac-pipeline-test/actions/oidc/customization/sub -F use_default=true) and run this again.' >&2
+  exit 1
+fi
+SUB_PREFIX="${oidc:-repo:absmart/iac-pipeline-test}"
+echo "GitHub OIDC subject prefix: $SUB_PREFIX"
+
 # ensure_identity <subscription> <resource group> <name> <location>: prints "<client ID> <principal ID>".
 ensure_identity() {
   if [ "$IDENTITY_KIND" = managedIdentity ]; then
@@ -36,16 +49,27 @@ ensure_identity() {
   fi
 }
 
-# ensure_federated <subscription> <resource group> <identity name> <client ID> <credential name> <issuer> <subject>
+# ensure_federated <subscription> <resource group> <identity name> <client ID> <credential name> <issuer> <subject>:
+# creates the credential, or updates its issuer and subject if they changed.
 ensure_federated() {
+  local current
   if [ "$IDENTITY_KIND" = managedIdentity ]; then
-    az identity federated-credential show --subscription "$1" -g "$2" --identity-name "$3" -n "$5" -o none 2>/dev/null ||
-      az identity federated-credential create --subscription "$1" -g "$2" --identity-name "$3" -n "$5" \
-        --issuer "$6" --subject "$7" --audiences "$AUDIENCE" -o none
+    current="$(az identity federated-credential show --subscription "$1" -g "$2" --identity-name "$3" -n "$5" \
+      --query "join(' ', [issuer, subject])" -o tsv 2>/dev/null || true)"
+    [ "$current" = "$6 $7" ] && return 0
+    az identity federated-credential "$([ -n "$current" ] && echo update || echo create)" \
+      --subscription "$1" -g "$2" --identity-name "$3" -n "$5" --issuer "$6" --subject "$7" --audiences "$AUDIENCE" -o none
   else
-    az ad app federated-credential show --id "$4" --federated-credential-id "$5" -o none 2>/dev/null ||
-      az ad app federated-credential create --id "$4" -o none --parameters "$(jq -n --arg n "$5" --arg i "$6" --arg s "$7" --arg a "$AUDIENCE" \
-        '{name: $n, issuer: $i, subject: $s, audiences: [$a]}')"
+    current="$(az ad app federated-credential show --id "$4" --federated-credential-id "$5" \
+      --query "join(' ', [issuer, subject])" -o tsv 2>/dev/null || true)"
+    [ "$current" = "$6 $7" ] && return 0
+    local parameters
+    parameters="$(jq -n --arg n "$5" --arg i "$6" --arg s "$7" --arg a "$AUDIENCE" '{name: $n, issuer: $i, subject: $s, audiences: [$a]}')"
+    if [ -n "$current" ]; then
+      az ad app federated-credential update --id "$4" --federated-credential-id "$5" --parameters "$parameters" -o none
+    else
+      az ad app federated-credential create --id "$4" --parameters "$parameters" -o none
+    fi
   fi
 }
 
@@ -91,15 +115,15 @@ require_state 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-tfstate-dev-eus2-01-rg
 ids="$(ensure_identity 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-deploy-dev-eus2-01-id' 'eastus2')"
 read -r DEV_DEPLOY_CLIENT DEV_DEPLOY_PRINCIPAL <<< "$ids"
 [ -n "$DEV_DEPLOY_PRINCIPAL" ] || { echo 'Couldn'\''t read the client and principal IDs of e2e-deploy-dev-eus2-01-id.' >&2; exit 1; }
-ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-deploy-dev-eus2-01-id' "$DEV_DEPLOY_CLIENT" 'github-environment-dev' 'https://token.actions.githubusercontent.com' 'repo:absmart/iac-pipeline-test:environment:dev'
+ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-deploy-dev-eus2-01-id' "$DEV_DEPLOY_CLIENT" 'github-environment-dev' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:environment:dev"
 ensure_role "$DEV_DEPLOY_PRINCIPAL" 'Contributor' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-dev-eus2-01-rg'
 ensure_role "$DEV_DEPLOY_PRINCIPAL" 'Storage Blob Data Contributor' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st/blobServices/default/containers/tfstate-dev'
 ensure_role "$DEV_DEPLOY_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st'
 ids="$(ensure_identity 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' 'eastus2')"
 read -r DEV_PLAN_CLIENT DEV_PLAN_PRINCIPAL <<< "$ids"
 [ -n "$DEV_PLAN_PRINCIPAL" ] || { echo 'Couldn'\''t read the client and principal IDs of e2e-plan-dev-eus2-01-id.' >&2; exit 1; }
-ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' "$DEV_PLAN_CLIENT" 'github-pull-request' 'https://token.actions.githubusercontent.com' 'repo:absmart/iac-pipeline-test:pull_request'
-ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' "$DEV_PLAN_CLIENT" 'github-environment-dev-plan' 'https://token.actions.githubusercontent.com' 'repo:absmart/iac-pipeline-test:environment:dev-plan'
+ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' "$DEV_PLAN_CLIENT" 'github-pull-request' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:pull_request"
+ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-dev-eus2-01-rg' 'e2e-plan-dev-eus2-01-id' "$DEV_PLAN_CLIENT" 'github-environment-dev-plan' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:environment:dev-plan"
 ensure_role "$DEV_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-dev-eus2-01-rg'
 ensure_role "$DEV_PLAN_PRINCIPAL" 'Storage Blob Data Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st/blobServices/default/containers/tfstate-dev'
 ensure_role "$DEV_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-dev-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstatedeveus201st'
@@ -117,15 +141,15 @@ require_state 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-tfstate-prd-eus2-01-rg
 ids="$(ensure_identity 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-deploy-prd-eus2-01-id' 'eastus2')"
 read -r PRD_DEPLOY_CLIENT PRD_DEPLOY_PRINCIPAL <<< "$ids"
 [ -n "$PRD_DEPLOY_PRINCIPAL" ] || { echo 'Couldn'\''t read the client and principal IDs of e2e-deploy-prd-eus2-01-id.' >&2; exit 1; }
-ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-deploy-prd-eus2-01-id' "$PRD_DEPLOY_CLIENT" 'github-environment-prd' 'https://token.actions.githubusercontent.com' 'repo:absmart/iac-pipeline-test:environment:prd'
+ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-deploy-prd-eus2-01-id' "$PRD_DEPLOY_CLIENT" 'github-environment-prd' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:environment:prd"
 ensure_role "$PRD_DEPLOY_PRINCIPAL" 'Contributor' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-prd-eus2-01-rg'
 ensure_role "$PRD_DEPLOY_PRINCIPAL" 'Storage Blob Data Contributor' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st/blobServices/default/containers/tfstate-prd'
 ensure_role "$PRD_DEPLOY_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st'
 ids="$(ensure_identity 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' 'eastus2')"
 read -r PRD_PLAN_CLIENT PRD_PLAN_PRINCIPAL <<< "$ids"
 [ -n "$PRD_PLAN_PRINCIPAL" ] || { echo 'Couldn'\''t read the client and principal IDs of e2e-plan-prd-eus2-01-id.' >&2; exit 1; }
-ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' "$PRD_PLAN_CLIENT" 'github-pull-request' 'https://token.actions.githubusercontent.com' 'repo:absmart/iac-pipeline-test:pull_request'
-ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' "$PRD_PLAN_CLIENT" 'github-environment-prd-plan' 'https://token.actions.githubusercontent.com' 'repo:absmart/iac-pipeline-test:environment:prd-plan'
+ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' "$PRD_PLAN_CLIENT" 'github-pull-request' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:pull_request"
+ensure_federated 'b8d7c6ba-ef18-484c-ad5c-da10d1e329fd' 'e2e-pipeline-prd-eus2-01-rg' 'e2e-plan-prd-eus2-01-id' "$PRD_PLAN_CLIENT" 'github-environment-prd-plan' 'https://token.actions.githubusercontent.com' "$SUB_PREFIX:environment:prd-plan"
 ensure_role "$PRD_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-prd-eus2-01-rg'
 ensure_role "$PRD_PLAN_PRINCIPAL" 'Storage Blob Data Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st/blobServices/default/containers/tfstate-prd'
 ensure_role "$PRD_PLAN_PRINCIPAL" 'Reader' '/subscriptions/b8d7c6ba-ef18-484c-ad5c-da10d1e329fd/resourceGroups/e2e-tfstate-prd-eus2-01-rg/providers/Microsoft.Storage/storageAccounts/e2etfstateprdeus201st'
