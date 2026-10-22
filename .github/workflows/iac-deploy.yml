@@ -53,7 +53,7 @@ jobs:
         working-directory: infra
         run: |
           set -euo pipefail
-          terraform init -input=false -no-color \
+          terraform init -input=false -no-color -lock=false \
             -backend-config=resource_group_name=e2e-tfstate-dev-eus2-01-rg \
             -backend-config=storage_account_name=e2etfstatedeveus201st \
             -backend-config=container_name=tfstate-dev \
@@ -144,7 +144,7 @@ jobs:
         working-directory: infra
         run: |
           set -euo pipefail
-          terraform init -input=false -no-color \
+          terraform init -input=false -no-color -lock=false \
             -backend-config=resource_group_name=e2e-tfstate-prd-eus2-01-rg \
             -backend-config=storage_account_name=e2etfstateprdeus201st \
             -backend-config=container_name=tfstate-prd \
